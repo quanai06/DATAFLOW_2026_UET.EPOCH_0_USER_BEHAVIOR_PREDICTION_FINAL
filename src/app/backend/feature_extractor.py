@@ -4,7 +4,11 @@ import math
 from collections import Counter
 from typing import Any
 
-from src.app.backend.config import DEFAULT_MAX_SEQUENCE_LENGTH, DEFAULT_TOP_HUBS
+from src.app.backend.config import (
+    DEFAULT_FEATURE_PROFILE,
+    DEFAULT_MAX_SEQUENCE_LENGTH,
+    DEFAULT_TOP_HUBS,
+)
 
 
 def parse_sequence(sequence_input: Any) -> list[int]:
@@ -86,6 +90,7 @@ def extract_features(
     *,
     max_length: int = DEFAULT_MAX_SEQUENCE_LENGTH,
     top_hubs: tuple[int, ...] = DEFAULT_TOP_HUBS,
+    feature_profile: str = DEFAULT_FEATURE_PROFILE,
 ) -> dict[str, Any]:
     sequence = parse_sequence(sequence_input)
     sequence, clipped = normalize_sequence(sequence, max_length=max_length)
@@ -95,7 +100,9 @@ def extract_features(
     unique_action_count = len(counts)
     most_common_action, most_common_count = _mode_value(counts)
     first_action = sequence[0]
+    second_action = sequence[1] if sequence_length >= 2 else first_action
     last_action = sequence[-1]
+    penultimate_action = sequence[-2] if sequence_length >= 2 else last_action
 
     rollback_3_count, rollback_4_count, rollback_anchors = _rollback_counts(sequence)
     anchor_action = rollback_anchors and Counter(rollback_anchors).most_common(1)[0][0] or most_common_action
@@ -108,26 +115,47 @@ def extract_features(
     rare_action_count = sum(1 for value in sequence if value not in top_hubs)
     rare_action_ratio = rare_action_count / max(sequence_length, 1)
     entropy_value = _entropy(sequence)
+    normalized_entropy = entropy_value / max(math.log2(max(sequence_length, 2)), 1.0)
 
     top_actions = [
         {"action": str(action), "count": count}
         for action, count in counts.most_common(5)
     ]
 
-    hub_counts = [float(counts.get(int(hub), 0)) for hub in top_hubs[:10]]
-    if len(hub_counts) < 10:
-        hub_counts.extend([0.0] * (10 - len(hub_counts)))
+    if feature_profile == "legacy_15":
+        hub_counts = [float(counts.get(int(hub), 0)) for hub in top_hubs[:10]]
+        if len(hub_counts) < 10:
+            hub_counts.extend([0.0] * (10 - len(hub_counts)))
 
-    # Match the original notebook training pipeline exactly:
-    # [length, nunique, first_item, last_item, mode_val] + top-10 hub counts.
-    wide_features = [
-        float(sequence_length),
-        float(unique_action_count),
-        float(first_action),
-        float(last_action),
-        float(most_common_action),
-        *hub_counts,
-    ]
+        wide_features = [
+            float(sequence_length),
+            float(unique_action_count),
+            float(first_action),
+            float(last_action),
+            float(most_common_action),
+            *hub_counts,
+        ]
+    else:
+        hub_counts = [float(counts.get(int(hub), 0)) for hub in top_hubs[:15]]
+        if len(hub_counts) < 15:
+            hub_counts.extend([0.0] * (15 - len(hub_counts)))
+
+        # The new combine models expect a wider stats vector than the old ensemble.
+        # When metadata is absent we rebuild the profile from the available notebook
+        # signals plus the observed scaler shape.
+        wide_features = [
+            float(sequence_length),
+            float(unique_action_count),
+            float(first_action),
+            float(last_action),
+            float(most_common_action),
+            float(rollback_3_count),
+            float(rollback_4_count),
+            float(second_action),
+            float(penultimate_action),
+            float(normalized_entropy),
+            *hub_counts,
+        ]
 
     return {
         "sequence": sequence,
@@ -158,9 +186,15 @@ def process_sequences(
     *,
     max_length: int = DEFAULT_MAX_SEQUENCE_LENGTH,
     top_hubs: tuple[int, ...] = DEFAULT_TOP_HUBS,
+    feature_profile: str = DEFAULT_FEATURE_PROFILE,
 ) -> list[dict[str, Any]]:
     return [
-        extract_features(sequence_input, max_length=max_length, top_hubs=top_hubs)
+        extract_features(
+            sequence_input,
+            max_length=max_length,
+            top_hubs=top_hubs,
+            feature_profile=feature_profile,
+        )
         for sequence_input in sequence_inputs
     ]
 

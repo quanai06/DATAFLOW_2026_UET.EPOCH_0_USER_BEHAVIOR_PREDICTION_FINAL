@@ -115,12 +115,12 @@ def action_frequency_chart(action_frequency_top: list[dict[str, Any]]) -> Any:
     frame = pd.DataFrame(action_frequency_top)
     if frame.empty:
         frame = pd.DataFrame({"action": ["N/A"], "count": [0]})
+    frame = frame.sort_values("count", ascending=False)
 
     figure = px.bar(
         frame,
-        x="count",
-        y="action",
-        orientation="h",
+        x="action",
+        y="count",
         color="count",
         color_continuous_scale=["#f7d9c7", ORANGE],
         title="Most Frequent Actions In Sequence",
@@ -128,13 +128,13 @@ def action_frequency_chart(action_frequency_top: list[dict[str, Any]]) -> Any:
     )
     figure.update_traces(textposition="outside", marker_line_color="#eaded4", marker_line_width=1)
     figure.update_layout(coloraxis_showscale=False)
-    figure.update_yaxes(categoryorder="total ascending")
+    figure.update_xaxes(type="category", tickangle=0)
     return _apply_enterprise_layout(
         figure,
         title="Most Frequent Actions In Sequence",
         height=320,
-        xaxis_title="Frequency",
-        yaxis_title="Action ID",
+        xaxis_title="Action ID",
+        yaxis_title="Frequency",
         showlegend=False,
     )
 
