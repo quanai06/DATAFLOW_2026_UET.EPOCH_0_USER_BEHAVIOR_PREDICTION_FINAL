@@ -1,0 +1,31 @@
+{
+  "source_mode": "precomputed",
+  "generated_at": "2026-03-16T07:34:34.628594+00:00",
+  "total_orders": 108673,
+  "processed_orders": 108673,
+  "source_x_test_rows": 108673,
+  "avg_length": 23.58,
+  "median_length": 21.0,
+  "p95_length": 43,
+  "max_length": 66,
+  "sequence_column_count": 66,
+  "precomputed_path": "/home/quan/DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION_FINAL/data/precomputed_orders.parquet",
+  "model_artifacts": {
+    "status": "ok",
+    "predictor_type": "real-ensemble",
+    "model_count": 1,
+    "model_files": [
+      "ensemble_model_1_lstm.keras"
+    ],
+    "runtime_ready": true,
+    "required_packages": {
+      "numpy": true,
+      "joblib": true,
+      "tensorflow": true
+    },
+    "max_sequence_length": 66,
+    "stats_feature_count": 15,
+    "aggregation": "median",
+    "artifact_root": "/home/quan/DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION_FINAL/models/ensemble"
+  }
+}
