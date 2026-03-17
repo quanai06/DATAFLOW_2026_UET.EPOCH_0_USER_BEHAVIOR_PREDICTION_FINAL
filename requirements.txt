@@ -12,3 +12,8 @@ joblib>=1.3.2
 transformers
 torch 
 accelerate
+fastapi 
+uvicorn
+streamlit
+requests
+pydantic
