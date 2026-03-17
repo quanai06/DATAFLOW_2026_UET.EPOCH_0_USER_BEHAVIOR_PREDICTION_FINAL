@@ -42,6 +42,7 @@ class SchedulerDecision(BaseModel):
     warehouse_stress_zone: str | None = None
     today_production_pct: float
     warehouse_waiting_pressure_pct: float
+    estimated_processing_minutes: float | None = None
     priority_level: Literal["HIGH", "MEDIUM", "LOW"]
     recommended_action: Literal["ACCELERATE", "MAINTAIN", "SLOW_DOWN", "HOLD"]
     explanation: str
@@ -114,6 +115,8 @@ class PlanningOrderItem(BaseModel):
     end_date: str | None = None
     today_production_pct: float
     warehouse_waiting_pressure_pct: float
+    customer_importance: str | None = None
+    estimated_processing_minutes: float | None = None
     risk_score: float
     risk_level: str
     planning_rank_score: float
@@ -129,6 +132,10 @@ class PlanningOrderItem(BaseModel):
     capacity_band: str | None = None
     completion_urgency_band: str | None = None
     warehouse_stress_zone: str | None = None
+    planned_order_sequence: int | None = None
+    planned_start_minute: float | None = None
+    planned_end_minute: float | None = None
+    cumulative_selected_processing_minutes: float | None = None
 
 
 class PlanningOverview(BaseModel):
@@ -136,8 +143,13 @@ class PlanningOverview(BaseModel):
     total_orders: int
     daily_capacity_budget_pct: float
     daily_warehouse_budget_pct: float
+    daily_time_budget_minutes: float
+    overload_mode_active: bool | None = None
     selected_orders_count: int
     deferred_orders_count: int
+    cumulative_selected_processing_minutes: float
+    remaining_time_budget_minutes: float
+    day_time_utilization_pct: float
     cumulative_selected_production_pct: float
     cumulative_selected_warehouse_pressure_pct: float
     capacity_budget_utilization_pct: float

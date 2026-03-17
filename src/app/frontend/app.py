@@ -24,7 +24,6 @@ from src.app.frontend.api_client import (
 from src.app.frontend.charts import (
     action_frequency_chart,
     batch_distribution_chart,
-    budget_consumption_chart,
     gauge_chart,
     output_bar_chart,
     selection_frontier_chart,
@@ -71,7 +70,7 @@ def _load_planning_overview(force_refresh: bool = False) -> dict | None:
         planning_table_start = max(1, int(st.session_state.planning_table_start))
         planning_table_end = max(planning_table_start, int(st.session_state.planning_table_end))
         planning_table_limit = min(100, planning_table_end - planning_table_start + 1)
-        st.session_state.planning_overview = _safe_call(
+        latest_planning = _safe_call(
             get_planning_overview,
             limit=10,
             capacity_budget_pct=float(st.session_state.capacity_budget_pct),
@@ -79,6 +78,8 @@ def _load_planning_overview(force_refresh: bool = False) -> dict | None:
             planning_table_offset=planning_table_start - 1,
             planning_table_limit=planning_table_limit,
         )
+        if latest_planning is not None:
+            st.session_state.planning_overview = latest_planning
     return st.session_state.planning_overview
 
 
@@ -102,6 +103,22 @@ def _load_selected_order(order_id: str, *, use_live_mode: bool = False) -> None:
     prediction = _safe_call(predict_order_live if use_live_mode else predict_order, order_id)
     if prediction is not None:
         st.session_state.single_prediction = prediction
+
+
+def _format_minutes(value: float | int | None) -> str:
+    if value is None:
+        return "0m"
+    total_minutes = max(float(value), 0.0)
+    hours = int(total_minutes // 60)
+    minutes = int(round(total_minutes - (hours * 60)))
+    if minutes == 60:
+        hours += 1
+        minutes = 0
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"
 
 
 def _render_header(health: dict, overview: dict | None) -> None:
@@ -135,7 +152,7 @@ def _render_chain_section() -> None:
             <strong>Step 1:</strong> Hanh vi bien dong 4 tuan cua khach duoc doc tu X_test.<br>
             <strong>Step 2:</strong> Ensemble model that suy ra 6 outputs attr_1..attr_6.<br>
             <strong>Step 3:</strong> Scheduler tinh nguoc tu completion window va workload de ra ty le nen chay hom nay va ap luc kho cho xuat.<br>
-            <strong>Step 4:</strong> Planning engine ap budget cong suat/ngan sach kho de chon nhom order nen dua vao plan ngay hom nay.
+            <strong>Step 4:</strong> Planning engine uoc tinh so phut xu ly tu attr_3 va attr_6, sau do xep lan luot cac order vao workday 480 phut va giu percent load/kho de theo doi.
         </div>
         """,
         unsafe_allow_html=True,
@@ -171,6 +188,11 @@ def _planning_frame(rows: list[dict]) -> pd.DataFrame:
             "planning_day_bucket",
             "start_date",
             "end_date",
+            "estimated_processing_minutes",
+            "planned_order_sequence",
+            "planned_start_minute",
+            "planned_end_minute",
+            "cumulative_selected_processing_minutes",
             "today_production_pct",
             "warehouse_waiting_pressure_pct",
             "risk_score",
@@ -205,7 +227,7 @@ def _render_planning_engine(planning: dict | None) -> None:
     budget_left, budget_mid, budget_right = st.columns([1.2, 1.2, 0.8])
     with budget_left:
         st.session_state.capacity_budget_pct = st.slider(
-            "Daily factory capacity budget",
+            "Legacy factory load reference",
             min_value=20.0,
             max_value=400.0,
             value=float(st.session_state.capacity_budget_pct),
@@ -213,7 +235,7 @@ def _render_planning_engine(planning: dict | None) -> None:
         )
     with budget_mid:
         st.session_state.warehouse_budget_pct = st.slider(
-            "Daily warehouse waiting budget",
+            "Legacy warehouse stress reference",
             min_value=20.0,
             max_value=500.0,
             value=float(st.session_state.warehouse_budget_pct),
@@ -222,12 +244,16 @@ def _render_planning_engine(planning: dict | None) -> None:
     with budget_right:
         st.write("")
         if st.button("Rebuild Plan", type="primary", use_container_width=True):
-            _load_planning_overview(force_refresh=True)
-            planning = st.session_state.planning_overview
+            planning = _load_planning_overview(force_refresh=True)
 
     if planning is None:
         st.warning("Chua tai duoc planning overview.")
         return
+
+    st.markdown(
+        '<div class="mini-note"><strong>Time-aware planner:</strong> daily selection is now driven by a fixed <strong>480-minute</strong> workday. The two sliders remain as legacy reference gauges so the existing load and warehouse charts stay comparable.</div>',
+        unsafe_allow_html=True,
+    )
 
     planning_table_total_count = int(planning.get("planning_table_total_count", 0))
     max_row_number = max(1, planning_table_total_count)
@@ -271,8 +297,11 @@ def _render_planning_engine(planning: dict | None) -> None:
     with range_right:
         st.write("")
         if st.button("Load Range", use_container_width=True):
-            _load_planning_overview(force_refresh=True)
-            planning = st.session_state.planning_overview
+            planning = _load_planning_overview(force_refresh=True)
+
+    if planning is None:
+        st.warning("Khong the cap nhat planning overview luc nay.")
+        return
 
     selected_frame = _planning_frame(planning["selected_orders_for_today"])
     deferred_frame = _planning_frame(planning["deferred_orders"])
@@ -286,30 +315,22 @@ def _render_planning_engine(planning: dict | None) -> None:
     planning_table_limit = int(planning.get("planning_table_limit", len(planning_table)))
     planning_table_end = min(planning_table_total_count, planning_table_offset + planning_table_limit)
 
-    summary_cols = st.columns(6)
-    selected_load = planning.get(
-        "cumulative_selected_production_load_pct",
-        planning.get("cumulative_selected_production_pct", 0.0),
-    )
-    warehouse_stress = planning.get(
-        "cumulative_selected_warehouse_stress_pct",
-        planning.get("cumulative_selected_warehouse_pressure_pct", 0.0),
-    )
-
-    summary_cards = [
-        ("Selected Today", str(planning.get("selected_orders_count", 0)), "orders admitted under today's budget"),
-        ("Deferred", str(planning.get("deferred_orders_count", 0)), "orders pushed to backlog"),
-        ("Selected Load", f"{selected_load:.1f}%", "total admitted production load"),
-        ("Warehouse Stress", f"{warehouse_stress:.1f}%", "total admitted warehouse stress"),
-        ("Capacity Use", f"{planning.get('capacity_budget_utilization_pct', 0.0):.1f}%", "factory budget utilization"),
-        ("Warehouse Use", f"{planning.get('warehouse_budget_utilization_pct', 0.0):.1f}%", "warehouse budget utilization"),
+    selected_minutes = float(planning.get("cumulative_selected_processing_minutes", 0.0))
+    day_time_budget = float(planning.get("daily_time_budget_minutes", 480.0))
+    primary_summary_cols = st.columns(5)
+    primary_summary_cards = [
+        ("Orders Today", str(planning.get("selected_orders_count", 0)), "so lenh can xu ly trong ca hom nay"),
+        ("Deferred", str(planning.get("deferred_orders_count", 0)), "don chua vao duoc ke hoach hom nay"),
+        ("Planned Time", _format_minutes(selected_minutes), "tong thoi gian xu ly da xep lich"),
+        ("Remaining Time", _format_minutes(planning.get("remaining_time_budget_minutes", 0.0)), "thoi gian con lai trong ca"),
+        ("Day Fill", f"{planning.get('day_time_utilization_pct', 0.0):.1f}%", f"muc lap day cua ca {_format_minutes(day_time_budget)}"),
     ]
-    for column, (label, value, caption) in zip(summary_cols, summary_cards):
+    for column, (label, value, caption) in zip(primary_summary_cols, primary_summary_cards):
         with column:
             metric_card(st, label, value, caption)
 
     st.markdown(
-        f'<div class="mini-note"><strong>Planning logic:</strong> Today duoc co dinh la <strong>01/01</strong>. Planner uu tien cao nhat cho order co <code>start_date = end_date = 01/01</code>, sau do den nhom <code>start_date = 01/01</code>, roi moi toi cac order o nhung ngay xa hon. Neu cung nhom ngay, planner sap xep <strong>HIGH -&gt; MEDIUM -&gt; LOW</strong>; trong tung nhom uu tien lai chay greedy theo <strong>production nho hon -&gt; warehouse nho hon -&gt; risk thap hon</strong>. <br><strong>Cut-off logic:</strong> {planning["cutoff_reason"]}</div>',
+        f'<div class="mini-note"><strong>Planning logic:</strong> Today duoc co dinh la <strong>01/01</strong>. Planner uu tien cao nhat cho order co <code>start_date = end_date = 01/01</code>, sau do den nhom <code>start_date = 01/01</code>, roi moi toi cac order o nhung ngay xa hon. Neu cung nhom ngay, planner van sap xep <strong>HIGH -&gt; MEDIUM -&gt; LOW</strong> theo ranking hien tai. Moi order duoc gan <strong>estimated processing minutes</strong> tu <code>attr_3</code> va <code>attr_6</code>, sau do planner xep lan luot cho toi khi day <strong>{_format_minutes(day_time_budget)}</strong>. <br><strong>Cut-off logic:</strong> {planning["cutoff_reason"]}</div>',
         unsafe_allow_html=True, 
     )
     st.markdown(
@@ -317,7 +338,7 @@ def _render_planning_engine(planning: dict | None) -> None:
         <div class="mini-note">
             <strong>How to read the board:</strong>
             Chart mau xanh va mau cam giup so sanh truc tiep muc tai san xuat va muc ap luc kho theo tung order.
-            Donut chart cho biet co cau lenh dieu do, con budget chart cho thay phan da dung va phan con lai trong ngay.
+            Donut chart cho biet co cau lenh dieu do, con budget chart ben phai giu vai tro theo doi cac percent budget legacy sau khi planner da chot theo gio.
         </div>
         """,
         unsafe_allow_html=True,
@@ -328,22 +349,10 @@ def _render_planning_engine(planning: dict | None) -> None:
     )
 
         # ===== Planning charts =====
-    chart_top_left, chart_top_right = st.columns(2)
-    with chart_top_left:
-        st.plotly_chart(
-            tradeoff_scatter_chart(planning_table, "Production vs Warehouse Load by Order"),
-            use_container_width=True,
-        )
-    with chart_top_right:
-        st.plotly_chart(
-            budget_consumption_chart(
-            capacity_budget_pct=planning.get("daily_capacity_budget_pct", 0.0),
-            warehouse_budget_pct=planning.get("daily_warehouse_budget_pct", 0.0),
-            cumulative_selected_production_load_pct=selected_load,
-            cumulative_selected_warehouse_stress_pct=warehouse_stress,
-        ),
-            use_container_width=True,
-        )
+    st.plotly_chart(
+        tradeoff_scatter_chart(planning_table, "Production vs Warehouse Load by Order"),
+        use_container_width=True,
+    )
 
     chart_mid_left, chart_mid_right = st.columns(2)
     with chart_mid_left:
@@ -389,16 +398,50 @@ def _render_planning_engine(planning: dict | None) -> None:
             use_container_width=True,
         )
 
-    shortlist_cols = st.columns(4)
-    shortlists = [
-        ("Selected For Today", selected_frame["order_id"].head(5).tolist() if not selected_frame.empty else ["None"]),
-        ("Accelerate Candidates", accelerate_frame["order_id"].head(5).tolist() if not accelerate_frame.empty else ["None"]),
-        ("Hold / Slow Down", hold_frame["order_id"].head(5).tolist() if not hold_frame.empty else ["None"]),
-        ("Highest Risk", risk_frame["order_id"].head(5).tolist() if not risk_frame.empty else ["None"]),
-    ]
-    for column, (label, values) in zip(shortlist_cols, shortlists):
-        with column:
-            metric_card(st, label, "<br>".join(values), "planning shortlist")
+    section_header(st, "Today's Execution Queue")
+    st.markdown(
+        '<div class="mini-note">Danh sach duoi day la toan bo don da duoc xep vao ca hom nay, theo dung thu tu planner khuyen nghi thuc hien tren xuyen suot 480 phut.</div>',
+        unsafe_allow_html=True,
+    )
+    if selected_frame.empty:
+        st.info("Hom nay chua co don nao duoc dua vao execution queue.")
+    else:
+        execution_queue = selected_frame.copy()
+        execution_queue["step"] = execution_queue["planned_order_sequence"].fillna(0).astype(int)
+        execution_queue["processing_time"] = execution_queue["estimated_processing_minutes"].map(_format_minutes)
+        execution_queue["time_window"] = execution_queue.apply(
+            lambda row: (
+                f"{_format_minutes(row['planned_start_minute'])} -> {_format_minutes(row['planned_end_minute'])}"
+                if pd.notna(row["planned_start_minute"]) and pd.notna(row["planned_end_minute"])
+                else "-"
+            ),
+            axis=1,
+        )
+        execution_queue = execution_queue.loc[
+            :,
+            [
+                "step",
+                "order_id",
+                "priority_level",
+                "recommended_action",
+                "processing_time",
+                "time_window",
+                "start_date",
+                "end_date",
+            ],
+        ].rename(
+            columns={
+                "step": "Seq",
+                "order_id": "Order ID",
+                "priority_level": "Priority",
+                "recommended_action": "Action",
+                "processing_time": "Processing Time",
+                "time_window": "Planned Window",
+                "start_date": "Start Date",
+                "end_date": "End Date",
+            }
+        )
+        st.dataframe(execution_queue, use_container_width=True, hide_index=True)
 
     section_header(st, "Planning Drill-down")
     inspect_candidates = planning_table["order_id"].tolist() if not planning_table.empty else []
@@ -487,7 +530,7 @@ def _render_outputs(payload: dict) -> None:
     st.markdown(
         "- `attr_3`: estimated factory workload signal used to size today's production effort\n"
         "- `attr_4`, `attr_5`: completion timing signals used to estimate urgency and delivery window\n"
-        "- `attr_6`: volatility / uncertainty proxy used by the risk layer"
+        "- `attr_6`: volatility / uncertainty proxy used by the risk layer and as a time buffer in processing estimates"
     )
 
     columns = st.columns(6)
@@ -518,11 +561,12 @@ def _render_scheduler(payload: dict) -> None:
             use_container_width=True,
         )
 
-    info_cols = st.columns(5)
+    info_cols = st.columns(6)
     metrics = [
         ("Capacity Band", decision.get("capacity_band", "-"), "workload zone"),
         ("Urgency Band", decision.get("completion_urgency_band", "-"), "completion window"),
         ("Window Days", str(decision.get("completion_window_days", "-")), "predicted window"),
+        ("Est. Time", _format_minutes(decision.get("estimated_processing_minutes", 0.0)), "expected processing time"),
         ("Warehouse Zone", decision.get("warehouse_stress_zone", "-"), "inventory stress"),
         ("Priority", decision["priority_level"], "execution priority"),
     ]
@@ -571,7 +615,7 @@ def _render_model_info(payload: dict, overview: dict | None) -> None:
         f"""
         - Demo mode hien tai la **{payload.get('source_mode', 'unknown')}** de UI lookup nhanh tren tap **{total_orders}** order.
         - Ensemble models: **{artifacts.get('model_count', 0)}** | Aggregation: **{artifacts.get('aggregation', 'unknown')}**
-        - Planning engine khong rerun model. No chi dung precomputed outputs de xay dung daily scenario theo budget cong suat va budget kho.
+        - Planning engine khong rerun model. No chi dung precomputed outputs de xay dung daily scenario theo 480 phut xu ly trong ngay, trong khi van giu percent load va warehouse budget de doi chieu.
         - Thuc te co the chay offline precompute theo lich gio/ngay, sau do dashboard chi doc artifact, phu hop cho ERP/WMS planning va scaling.
         - Live mode van ton tai de doi chieu model runtime, nhung khong phai duong chay mac dinh.
         """

@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from src.app.backend.config import PLANNING_TODAY_DAY, PLANNING_TODAY_MONTH
+from src.app.backend.scheduler import estimate_processing_minutes
 
 
 ACTION_WEIGHT_MAP = {
@@ -23,10 +24,44 @@ ACTION_PRIORITY_MAP = {
     "HOLD": 1,
 }
 
+ACTION_RANK_MAP = {
+    "ACCELERATE": 0,
+    "MAINTAIN": 1,
+    "SLOW_DOWN": 2,
+    "HOLD": 3,
+}
+
 PRIORITY_WEIGHT_MAP = {
     "HIGH": 1.00,
     "MEDIUM": 0.65,
     "LOW": 0.25,
+}
+
+DEFAULT_WORKDAY_MINUTES = 480.0
+DEFAULT_CUSTOMER_IMPORTANCE = "NORMAL"
+URGENT_DAY_BUCKETS = {"TODAY_EXACT", "START_TODAY", "ACTIVE_WINDOW"}
+
+CUSTOMER_IMPORTANCE_RANK_MAP = {
+    "STRATEGIC": 0,
+    "HIGH_POTENTIAL": 1,
+    "RECURRING": 2,
+    "LONG_CHAIN": 2,
+    "NORMAL": 3,
+    "LOW": 4,
+}
+
+NUMERIC_CUSTOMER_IMPORTANCE_MAP = {
+    1: "STRATEGIC",
+    2: "HIGH_POTENTIAL",
+    3: "NORMAL",
+    4: "LOW",
+}
+
+URGENCY_RANK_MAP = {
+    "NEAR": 0,
+    "MID": 1,
+    "FAR": 2,
+    "LONG": 3,
 }
 
 
@@ -86,26 +121,103 @@ def _build_diversity_signature(row: dict[str, Any]) -> tuple:
     )
 
 
-def _select_diverse_rows(
-    rows: list[dict[str, Any]],
-    *,
-    top_n: int,
-    max_per_signature: int,
-) -> list[dict[str, Any]]:
-    selected: list[dict[str, Any]] = []
-    signature_counts: dict[tuple, int] = {}
+def _resolve_processing_minutes(row: dict[str, Any]) -> float:
+    attr_3 = row.get("attr_3", 0.0)
+    attr_6 = row.get("attr_6", 0.0)
+    try:
+        return estimate_processing_minutes(float(attr_3), float(attr_6))
+    except (TypeError, ValueError):
+        existing_value = row.get("estimated_processing_minutes")
+        try:
+            if existing_value is not None and pd.notna(existing_value):
+                return round(max(float(existing_value), 0.0), 2)
+        except (TypeError, ValueError):
+            pass
+        return 2.0
 
-    for row in rows:
-        signature = _build_diversity_signature(row)
-        current_count = signature_counts.get(signature, 0)
-        if current_count >= max_per_signature:
+
+def _canonicalize_text(value: Any) -> str:
+    return str(value).strip().upper().replace("-", "_").replace(" ", "_")
+
+
+def _sequence_length_customer_importance(row: dict[str, Any]) -> str:
+    sequence_length_value = row.get("sequence_length")
+    try:
+        sequence_length = int(float(sequence_length_value))
+    except (TypeError, ValueError):
+        sequence_length = 0
+
+    if sequence_length >= 58:
+        return "LONG_CHAIN"
+    if sequence_length >= 50:
+        return "HIGH_POTENTIAL"
+    if sequence_length >= 35:
+        return "NORMAL"
+    if sequence_length > 0:
+        return "LOW"
+    return DEFAULT_CUSTOMER_IMPORTANCE
+
+
+def _resolve_customer_importance(row: dict[str, Any]) -> str:
+    sequence_based_importance = _sequence_length_customer_importance(row)
+    direct_fields = [
+        "customer_importance",
+        "customer_priority",
+        "customer_value_tier",
+        "customer_potential",
+    ]
+    for field_name in direct_fields:
+        value = row.get(field_name)
+        if value is None or (isinstance(value, float) and pd.isna(value)):
             continue
-        selected.append(row)
-        signature_counts[signature] = current_count + 1
-        if len(selected) >= top_n:
-            break
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            normalized = NUMERIC_CUSTOMER_IMPORTANCE_MAP.get(int(value))
+            if normalized is not None:
+                return (
+                    normalized
+                    if CUSTOMER_IMPORTANCE_RANK_MAP[normalized]
+                    < CUSTOMER_IMPORTANCE_RANK_MAP[sequence_based_importance]
+                    else sequence_based_importance
+                )
+        normalized_value = _canonicalize_text(value)
+        if normalized_value in CUSTOMER_IMPORTANCE_RANK_MAP:
+            return (
+                normalized_value
+                if CUSTOMER_IMPORTANCE_RANK_MAP[normalized_value]
+                < CUSTOMER_IMPORTANCE_RANK_MAP[sequence_based_importance]
+                else sequence_based_importance
+            )
+        synonym_map = {
+            "VIP": "STRATEGIC",
+            "HIGH": "HIGH_POTENTIAL",
+            "GROWTH": "HIGH_POTENTIAL",
+            "LOYAL": "RECURRING",
+            "REPEAT": "RECURRING",
+            "LONGTERM": "LONG_CHAIN",
+            "LONG_TERM": "LONG_CHAIN",
+            "STANDARD": "NORMAL",
+            "DEFAULT": "NORMAL",
+            "ONE_OFF": "LOW",
+            "ONEOFF": "LOW",
+        }
+        if normalized_value in synonym_map:
+            mapped_value = synonym_map[normalized_value]
+            return (
+                mapped_value
+                if CUSTOMER_IMPORTANCE_RANK_MAP[mapped_value]
+                < CUSTOMER_IMPORTANCE_RANK_MAP[sequence_based_importance]
+                else sequence_based_importance
+            )
 
-    return selected
+    long_chain_flag = row.get("long_chain_customer_flag")
+    if isinstance(long_chain_flag, bool):
+        return "LONG_CHAIN" if long_chain_flag else sequence_based_importance
+    if long_chain_flag is not None and not pd.isna(long_chain_flag):
+        normalized_flag = _canonicalize_text(long_chain_flag)
+        if normalized_flag in {"1", "TRUE", "YES", "Y"}:
+            return "LONG_CHAIN"
+
+    return sequence_based_importance
 
 
 def build_daily_plan(
@@ -113,21 +225,31 @@ def build_daily_plan(
     *,
     capacity_budget_pct: float,
     warehouse_budget_pct: float,
+    daily_time_budget_minutes: float = DEFAULT_WORKDAY_MINUTES,
     limit: int = 10,
     max_per_signature: int = 1,
     planning_table_offset: int = 0,
     planning_table_limit: int = 100,
 ) -> dict[str, Any]:
+    normalized_time_budget = round(max(float(daily_time_budget_minutes), 0.0), 2)
+
     if frame.empty:
         return {
             "daily_capacity_budget_pct": round(capacity_budget_pct, 2),
             "daily_warehouse_budget_pct": round(warehouse_budget_pct, 2),
+            "daily_time_budget_minutes": normalized_time_budget,
+            "overload_mode_active": False,
             "selected_orders_count": 0,
             "deferred_orders_count": 0,
+            "cumulative_selected_processing_minutes": 0.0,
+            "remaining_time_budget_minutes": normalized_time_budget,
+            "day_time_utilization_pct": 0.0,
             "cumulative_selected_production_load_pct": 0.0,
             "cumulative_selected_warehouse_stress_pct": 0.0,
             "capacity_budget_utilization_pct": 0.0,
             "warehouse_budget_utilization_pct": 0.0,
+            "cumulative_selected_production_pct": 0.0,
+            "cumulative_selected_warehouse_pressure_pct": 0.0,
             "selected_orders_for_today": [],
             "deferred_orders": [],
             "cutoff_reason": "No orders available.",
@@ -238,6 +360,20 @@ def build_daily_plan(
             + 0.10 * rare_action_weight
         )
     ).round(2)
+    working["estimated_processing_minutes"] = working.apply(
+        lambda row: _resolve_processing_minutes(row.to_dict()),
+        axis=1,
+    )
+    working["customer_importance"] = working.apply(
+        lambda row: _resolve_customer_importance(row.to_dict()),
+        axis=1,
+    )
+    working["customer_importance_rank"] = (
+        working["customer_importance"]
+        .map(CUSTOMER_IMPORTANCE_RANK_MAP)
+        .fillna(CUSTOMER_IMPORTANCE_RANK_MAP[DEFAULT_CUSTOMER_IMPORTANCE])
+        .astype(int)
+    )
 
     # ======================================================
     # Planning rank score
@@ -260,6 +396,12 @@ def build_daily_plan(
     working["planning_rank_score"] = working["planning_rank_score"].clip(lower=0.0)
 
     working["action_priority"] = action_priority
+    working["action_rank"] = (
+        working["recommended_action"]
+        .map(ACTION_RANK_MAP)
+        .fillna(3)
+        .astype(int)
+    )
     working["priority_weight"] = priority_weight
     day_bucket_info = working.apply(lambda row: _planning_day_bucket(row.to_dict()), axis=1)
     working["planning_day_bucket"] = day_bucket_info.map(lambda item: item[0])
@@ -271,47 +413,55 @@ def build_daily_plan(
         .fillna(3)
         .astype(int)
     )
+    working["high_potential_length_rank"] = (
+        pd.to_numeric(working.get("sequence_length"), errors="coerce")
+        .fillna(0.0)
+        .lt(50.0)
+        .astype(int)
+    )
+    overload_mode_active = False
+    sort_columns = [
+        "planning_day_priority",
+        "planning_day_distance",
+        "priority_rank",
+        "high_potential_length_rank",
+        "today_production_pct",
+        "warehouse_waiting_pressure_pct",
+        "risk_score",
+        "planning_rank_score",
+        "behavior_diversity_score",
+        "action_priority",
+        "priority_weight",
+    ]
+    sort_ascending = [True, True, True, True, True, True, True, False, False, False, False]
 
     working = working.sort_values(
-        by=[
-            "planning_day_priority",
-            "planning_day_distance",
-            "priority_rank",
-            "today_production_pct",
-            "warehouse_waiting_pressure_pct",
-            "risk_score",
-            "planning_rank_score",
-            "behavior_diversity_score",
-            "action_priority",
-            "priority_weight",
-        ],
-        ascending=[True, True, True, True, True, True, False, False, False, False],
+        by=sort_columns,
+        ascending=sort_ascending,
     ).reset_index(drop=True)
 
     cumulative_capacity = 0.0
     cumulative_warehouse = 0.0
+    cumulative_minutes = 0.0
+    selected_sequence = 0
     selected_rows: list[dict[str, Any]] = []
     deferred_rows: list[dict[str, Any]] = []
-    cutoff_reason = "All ranked orders fit within today's budget."
-
-    # signature cap để tránh shortlist toàn giống nhau
-    signature_counts: dict[tuple, int] = {}
+    cutoff_reason = "All ranked orders fit within today's 480-minute workday."
+    first_time_constrained_order_id: str | None = None
+    first_time_constrained_total_minutes: float | None = None
 
     for _, row in working.iterrows():
         row_dict = row.to_dict()
         current_action = str(row_dict["recommended_action"])
+        order_minutes = _resolve_processing_minutes(row_dict)
+        row_dict["estimated_processing_minutes"] = order_minutes
 
         if current_action == "HOLD":
             row_dict["plan_status"] = "DEFERRED"
-            deferred_rows.append(row_dict)
-            continue
-
-        signature = _build_diversity_signature(row_dict)
-        current_count = signature_counts.get(signature, 0)
-
-        # nếu đã đủ quota cho signature này thì deferred luôn
-        if current_count >= max_per_signature:
-            row_dict["plan_status"] = "DEFERRED"
+            row_dict["planned_order_sequence"] = None
+            row_dict["planned_start_minute"] = None
+            row_dict["planned_end_minute"] = None
+            row_dict["cumulative_selected_processing_minutes"] = round(cumulative_minutes, 2)
             deferred_rows.append(row_dict)
             continue
 
@@ -320,36 +470,43 @@ def build_daily_plan(
 
         next_capacity = cumulative_capacity + order_capacity
         next_warehouse = cumulative_warehouse + order_warehouse
-
-        allowed = (
-            next_capacity <= capacity_budget_pct
-            and next_warehouse <= warehouse_budget_pct
-        )
+        next_minutes = cumulative_minutes + order_minutes
+        allowed = next_minutes <= normalized_time_budget
 
         if allowed:
             cumulative_capacity = next_capacity
             cumulative_warehouse = next_warehouse
+            row_dict["planned_order_sequence"] = selected_sequence + 1
+            row_dict["planned_start_minute"] = round(cumulative_minutes, 2)
+            cumulative_minutes = next_minutes
+            row_dict["planned_end_minute"] = round(cumulative_minutes, 2)
+            row_dict["cumulative_selected_processing_minutes"] = round(cumulative_minutes, 2)
             row_dict["plan_status"] = "SELECTED"
             selected_rows.append(row_dict)
-            signature_counts[signature] = current_count + 1
+            selected_sequence += 1
         else:
             row_dict["plan_status"] = "DEFERRED"
+            row_dict["planned_order_sequence"] = None
+            row_dict["planned_start_minute"] = None
+            row_dict["planned_end_minute"] = None
+            row_dict["cumulative_selected_processing_minutes"] = round(cumulative_minutes, 2)
             deferred_rows.append(row_dict)
-            if cutoff_reason == "All ranked orders fit within today's budget.":
-                if next_capacity > capacity_budget_pct and next_warehouse > warehouse_budget_pct:
-                    cutoff_reason = (
-                        "Stopped when both factory capacity budget and warehouse waiting budget "
-                        "would be exceeded."
-                    )
-                elif next_capacity > capacity_budget_pct:
-                    cutoff_reason = "Stopped when factory capacity budget would be exceeded."
-                else:
-                    cutoff_reason = "Stopped when warehouse waiting budget would be exceeded."
+            if first_time_constrained_order_id is None:
+                first_time_constrained_order_id = str(row_dict.get("id", "UNKNOWN"))
+                first_time_constrained_total_minutes = round(next_minutes, 2)
 
-    if cutoff_reason == "All ranked orders fit within today's budget." and selected_rows:
+    if first_time_constrained_order_id is not None and selected_rows:
         cutoff_reason = (
-            f"Planner admitted diverse order patterns first and capped each decision signature at {max_per_signature} order(s)."
+            f"Planner kept the ranked sequence, deferred orders that would exceed the 480-minute workday, "
+            f"and first hit that limit at order {first_time_constrained_order_id} ({first_time_constrained_total_minutes:.2f} projected minutes)."
         )
+    elif first_time_constrained_order_id is not None:
+        cutoff_reason = (
+            f"No ranked non-HOLD orders fit within today's 480-minute workday; the first candidate "
+            f"{first_time_constrained_order_id} would have required {first_time_constrained_total_minutes:.2f} minutes."
+        )
+    elif cutoff_reason == "All ranked orders fit within today's 480-minute workday." and selected_rows:
+        cutoff_reason = "Planner kept the ranked sequence and all ranked non-HOLD orders still fit within today's 480-minute workday."
 
     export_columns = [
         "id",
@@ -360,6 +517,8 @@ def build_daily_plan(
         "end_date",
         "today_production_pct",
         "warehouse_waiting_pressure_pct",
+        "customer_importance",
+        "estimated_processing_minutes",
         "risk_score",
         "risk_level",
         "planning_rank_score",
@@ -375,6 +534,10 @@ def build_daily_plan(
         "rollback_4_count",
         "entropy",
         "rare_action_ratio",
+        "planned_order_sequence",
+        "planned_start_minute",
+        "planned_end_minute",
+        "cumulative_selected_processing_minutes",
     ]
 
     def _export(rows: list[dict[str, Any]], top_n: int | None = None) -> list[dict[str, Any]]:
@@ -383,6 +546,7 @@ def build_daily_plan(
         export_frame = pd.DataFrame(rows)
         available_columns = [c for c in export_columns if c in export_frame.columns]
         export_frame = export_frame.loc[:, available_columns].rename(columns={"id": "order_id"})
+        export_frame = export_frame.astype(object).where(pd.notna(export_frame), None)
         if top_n is not None:
             export_frame = export_frame.head(top_n)
         return export_frame.to_dict(orient="records")
@@ -430,19 +594,8 @@ def build_daily_plan(
     planning_table_rows = selected_rows + deferred_rows
     if planning_table_rows:
         planning_table_frame = pd.DataFrame(planning_table_rows).sort_values(
-            by=[
-                "planning_day_priority",
-                "planning_day_distance",
-                "priority_rank",
-                "today_production_pct",
-                "warehouse_waiting_pressure_pct",
-                "risk_score",
-                "planning_rank_score",
-                "behavior_diversity_score",
-                "action_priority",
-                "priority_weight",
-            ],
-            ascending=[True, True, True, True, True, True, False, False, False, False],
+            by=sort_columns,
+            ascending=sort_ascending,
         )
         planning_table_rows = planning_table_frame.to_dict(orient="records")
     planning_table_total_count = len(planning_table_rows)
@@ -453,8 +606,15 @@ def build_daily_plan(
     return {
         "daily_capacity_budget_pct": round(capacity_budget_pct, 2),
         "daily_warehouse_budget_pct": round(warehouse_budget_pct, 2),
+        "daily_time_budget_minutes": normalized_time_budget,
+        "overload_mode_active": overload_mode_active,
         "selected_orders_count": len(selected_rows),
         "deferred_orders_count": len(deferred_rows),
+        "cumulative_selected_processing_minutes": round(cumulative_minutes, 2),
+        "remaining_time_budget_minutes": round(max(normalized_time_budget - cumulative_minutes, 0.0), 2),
+        "day_time_utilization_pct": round(
+            (cumulative_minutes / max(normalized_time_budget, 1.0)) * 100.0, 2
+        ),
         "cumulative_selected_production_load_pct": round(cumulative_capacity, 2),
         "cumulative_selected_warehouse_stress_pct": round(cumulative_warehouse, 2),
         "capacity_budget_utilization_pct": round(
@@ -466,7 +626,7 @@ def build_daily_plan(
         # compatibility aliases
         "cumulative_selected_production_pct": round(cumulative_capacity, 2),
         "cumulative_selected_warehouse_pressure_pct": round(cumulative_warehouse, 2),
-        "selected_orders_for_today": _export(selected_rows, top_n=max(limit, 12)),
+        "selected_orders_for_today": _export(selected_rows),
         "deferred_orders": _export(deferred_rows, top_n=max(limit, 12)),
         "cutoff_reason": cutoff_reason,
         "top_priority_orders": top_priority_rows,

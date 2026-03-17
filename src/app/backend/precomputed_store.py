@@ -101,12 +101,19 @@ class PrecomputedStore:
                 "total_orders": 0,
                 "daily_capacity_budget_pct": round(capacity_budget_pct, 2),
                 "daily_warehouse_budget_pct": round(warehouse_budget_pct, 2),
+                "daily_time_budget_minutes": 480.0,
+                "overload_mode_active": False,
                 "selected_orders_count": 0,
                 "deferred_orders_count": 0,
+                "cumulative_selected_processing_minutes": 0.0,
+                "remaining_time_budget_minutes": 480.0,
+                "day_time_utilization_pct": 0.0,
                 "cumulative_selected_production_load_pct": 0.0,
                 "cumulative_selected_warehouse_stress_pct": 0.0,
                 "capacity_budget_utilization_pct": 0.0,
                 "warehouse_budget_utilization_pct": 0.0,
+                "cumulative_selected_production_pct": 0.0,
+                "cumulative_selected_warehouse_pressure_pct": 0.0,
                 "cutoff_reason": "No precomputed orders available.",
                 "selected_orders_for_today": [],
                 "deferred_orders": [],
@@ -269,6 +276,8 @@ class PrecomputedStore:
             enriched_rows.append(
                 {
                     "id": str(row["id"]),
+                    "attr_3": int(predicted_outputs["attr_3"]),
+                    "attr_6": int(predicted_outputs["attr_6"]),
                     "start_month": int(predicted_outputs["attr_1"]),
                     "start_day": int(predicted_outputs["attr_2"]),
                     "end_month": int(predicted_outputs["attr_4"]),
@@ -298,6 +307,9 @@ class PrecomputedStore:
                     "today_production_pct": float(scheduler_decision["today_production_pct"]),
                     "warehouse_waiting_pressure_pct": float(
                         scheduler_decision["warehouse_waiting_pressure_pct"]
+                    ),
+                    "estimated_processing_minutes": float(
+                        scheduler_decision.get("estimated_processing_minutes", 30.0)
                     ),
                     "priority_level": str(scheduler_decision["priority_level"]),
                     "recommended_action": str(scheduler_decision["recommended_action"]),

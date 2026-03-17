@@ -4,6 +4,12 @@ from calendar import monthrange
 from datetime import date
 from typing import Any
 
+
+MIN_PROCESSING_MINUTES = 0.5
+MAX_PROCESSING_MINUTES = 5.0
+PROCESSING_TIME_CURVE_EXPONENT = 1.75
+
+
 def _clip(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
@@ -25,6 +31,17 @@ def _capacity_band(attr_3: float) -> str:
 def _capacity_score(attr_3: float) -> float:
     # Keep the score continuous so nearby workloads no longer collapse into the same output.
     return _clip(attr_3 / 99.0, 0.0, 1.0)
+
+
+def estimate_processing_minutes(attr_3: float, attr_6: float) -> float:
+    workload = _clip(attr_3 / 99.0, 0.0, 1.0)
+    volatility = _clip(attr_6 / 99.0, 0.0, 1.0)
+    difficulty = 0.6 * workload + 0.4 * volatility
+    scaled_minutes = MIN_PROCESSING_MINUTES + (
+        (MAX_PROCESSING_MINUTES - MIN_PROCESSING_MINUTES)
+        * (difficulty ** PROCESSING_TIME_CURVE_EXPONENT)
+    )
+    return round(_clip(scaled_minutes, MIN_PROCESSING_MINUTES, MAX_PROCESSING_MINUTES), 2)
 
 
 def _urgency_band(window_days: int) -> str:
@@ -77,6 +94,7 @@ def build_scheduler_decision(predicted_outputs: dict[str, int]) -> dict[str, Any
     attr_3 = float(predicted_outputs["attr_3"])
     end_month = int(predicted_outputs["attr_4"])
     end_day = int(predicted_outputs["attr_5"])
+    attr_6 = float(predicted_outputs["attr_6"])
 
     start_ordinal = _day_of_year(start_month, start_day)
     end_ordinal = _day_of_year(end_month, end_day)
@@ -88,6 +106,7 @@ def build_scheduler_decision(predicted_outputs: dict[str, int]) -> dict[str, Any
     capacity_score = _capacity_score(attr_3)
     urgency_band = _urgency_band(window_days)
     completion_urgency_score = _urgency_score(window_days)
+    estimated_minutes = estimate_processing_minutes(attr_3, attr_6)
 
     # ======================================================
     # 1. Production allocation
@@ -171,7 +190,8 @@ def build_scheduler_decision(predicted_outputs: dict[str, int]) -> dict[str, Any
     explanation = (
         f"Factory workload signal attr_3={int(attr_3)} -> {capacity_band.lower()} demand. "
         f"Completion target {end_month:02d}/{end_day:02d} with a {window_days}-day window -> {urgency_band.lower()} urgency. "
-        f"Recommended today production is {today_production_pct:.1f}% and expected warehouse waiting pressure is {warehouse_waiting_pressure_pct:.1f}%."
+        f"Recommended today production is {today_production_pct:.1f}% and expected warehouse waiting pressure is {warehouse_waiting_pressure_pct:.1f}%. "
+        f"Estimated processing time for this order is {estimated_minutes:.2f} minutes."
     )
 
     if recommended_action == "ACCELERATE":
@@ -193,6 +213,7 @@ def build_scheduler_decision(predicted_outputs: dict[str, int]) -> dict[str, Any
         "warehouse_stress_zone": warehouse_zone,
         "today_production_pct": round(today_production_pct, 2),
         "warehouse_waiting_pressure_pct": round(warehouse_waiting_pressure_pct, 2),
+        "estimated_processing_minutes": estimated_minutes,
         "priority_level": priority_level,
         "recommended_action": recommended_action,
         "explanation": explanation,
