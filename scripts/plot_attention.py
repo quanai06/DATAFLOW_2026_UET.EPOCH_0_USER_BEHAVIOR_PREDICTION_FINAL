@@ -8,7 +8,7 @@ from src.models.transformer_model import TransformerModel
 # --- CẤU HÌNH ĐỒNG BỘ ---
 VOCAB_SIZE = 30000
 D_MODEL = 256
-NUM_LAYERS = 6
+NUM_LAYERS = 4
 MODEL_FOLDER = "model/kfold/"
 OUTPUT_DIR = "outputs/plots/"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -16,7 +16,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def load_all_models():
     models = []
-    for i in range(5):
+    for i in range(3):
         path = os.path.join(MODEL_FOLDER, f"transformer_f{i}.pth")
         if os.path.exists(path):
             m = TransformerModel(vocab_size=VOCAB_SIZE, d_model=D_MODEL, num_layers=NUM_LAYERS).to(DEVICE)

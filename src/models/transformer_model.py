@@ -2,56 +2,53 @@ import torch
 import torch.nn as nn
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model, nhead, dim_ff, dropout=0.3): # Tăng Dropout
+    def __init__(self, d_model, nhead, dim_ff, dropout=0.2):
         super().__init__()
+        # Để ý cái batch_first=True
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.ff = nn.Sequential(
             nn.Linear(d_model, dim_ff),
-            nn.ReLU(),
+            nn.GELU(), 
             nn.Dropout(dropout),
             nn.Linear(dim_ff, d_model)
         )
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
+        # Quan trọng: Lấy attn_weights ở đây
         attn_out, attn_weights = self.self_attn(x, x, x, key_padding_mask=mask)
         x = self.norm1(x + self.dropout(attn_out))
         x = self.norm2(x + self.dropout(self.ff(x)))
         return x, attn_weights
 
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size=30000, d_model=256, nhead=8, num_layers=6, dropout=0.2):
+    def __init__(self, vocab_size=30000, d_model=256, nhead=8, num_layers=4, dropout=0.2):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=0)
         self.pos_embedding = nn.Parameter(torch.randn(1, 67, d_model))
         self.cls_token = nn.Parameter(torch.randn(1, 1, d_model))
         
         self.layers = nn.ModuleList([
-            TransformerBlock(d_model, nhead, d_model*4, dropout) # FF tăng lên x4
+            TransformerBlock(d_model, nhead, d_model*4, dropout)
             for _ in range(num_layers)
         ])
         self.norm_final = nn.LayerNorm(d_model)
 
-        # Nhánh 1: Ngày tháng (4 cột: 1, 2, 4, 5)
+        # Head dates (attr 1, 2, 4, 5)
         self.head_dates = nn.Sequential(
-            nn.Linear(d_model, 64),
-            nn.LayerNorm(64),
-            nn.ReLU(),
-            nn.Linear(64, 4),
+            nn.Linear(d_model * 2, 128),
+            nn.GELU(),
+            nn.Linear(128, 4),
             nn.Sigmoid()
         )
         
-        # Nhánh 2: Nhà máy (2 cột: 3, 6) - Tăng độ sâu để học kỹ hơn vì W=100
+        # Head factory (attr 3, 6)
         self.head_factory = nn.Sequential(
-            nn.Linear(d_model, 128), # Tăng width nhánh này
-            nn.LayerNorm(128),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 2),
+            nn.Linear(d_model * 2, 256),
+            nn.GELU(),
+            nn.Linear(256, 2),
             nn.Sigmoid()
         )
 
@@ -72,19 +69,32 @@ class TransformerModel(nn.Module):
 
         all_attentions = []
         for layer in self.layers:
+            # Lấy cả x và attention weights từ từng layer
             x, attn = layer(x, full_mask)
             all_attentions.append(attn)
             
-        cls_out = self.norm_final(x[:, 0, :])
+        x = self.norm_final(x)
         
-        out_dates = self.head_dates(cls_out) * self.M_dates
-        out_factory = self.head_factory(cls_out) * self.M_factory
+        # CLS + Mean Pooling cho xịn
+        cls_feat = x[:, 0, :]
+        if full_mask is not None:
+            mask_weights = (~full_mask).float().unsqueeze(-1)
+            mean_feat = (x * mask_weights).sum(dim=1) / mask_weights.sum(dim=1)
+        else:
+            mean_feat = x.mean(dim=1)
+            
+        combined = torch.cat([cls_feat, mean_feat], dim=-1)
         
-        # Ghép đúng thứ tự: 1, 2, 3, 4, 5, 6
+        # Sigmoid * M để Score đẹp ngay từ Epoch 1
+        out_dates = self.head_dates(combined) * self.M_dates
+        out_factory = self.head_factory(combined) * self.M_factory
+        
         final_out = torch.cat([
             out_dates[:, :2],   # attr_1, 2
             out_factory[:, :1], # attr_3
             out_dates[:, 2:],   # attr_4, 5
             out_factory[:, 1:]  # attr_6
         ], dim=1)
+        
+        # Trả về kết quả và danh sách attention cho bạn vẽ Heatmap
         return final_out, all_attentions

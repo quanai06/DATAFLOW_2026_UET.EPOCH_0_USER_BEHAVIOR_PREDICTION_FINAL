@@ -12,8 +12,8 @@ def make_submission():
     
     # Load 5 models
     models = []
-    for i in range(5):
-        m = TransformerModel(vocab_size=30000, d_model=256, num_layers=6).to(DEVICE)
+    for i in range(3):
+        m = TransformerModel(vocab_size=30000, d_model=256, num_layers=4).to(DEVICE)
         m.load_state_dict(torch.load(f"model/kfold/transformer_f{i}.pth"))
         m.eval()
         models.append(m)
