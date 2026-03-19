@@ -235,34 +235,31 @@ python src/r2/run_r2_softcls_v3.py --seed 42 --folds 5 --d_model 512 --layers 6 
 python src/r2/run_r2_softcls_v3.py --seed 42 --d_model 512 --layers 6 --epochs 40 --batch 128 --fullfit
 ```
 
+### Pipeline training transformers
+```bash
+python scripts/pipeline_training.py
+```
+
 ### Predict bằng Transformer
 ```bash
 python scripts/predict_test.py
 ```
 
+### Pipe line AI 
+```bash
+python scripts/pipeline-ai.py
+```
+
+### Tiền xử lí trước khi đưa vào app
+```bash
+python precompute_x_test.py
+```
 ### Chạy app demo
 ```bash
 python run.py
 ```
 
-## 8. Hướng dùng repo theo mục tiêu
-
-Nếu muốn nghiên cứu pipeline dữ liệu:
-- bắt đầu từ [rebuild_r2_pipeline.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/rebuild_r2_pipeline.py)
-
-Nếu muốn train mô hình tuần tự ổn định:
-- bắt đầu từ [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/run_r2_regression.py)
-
-Nếu muốn train mô hình attention / phân tích heatmap:
-- bắt đầu từ [src/models/transformer_model.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/models/transformer_model.py)
-- rồi tới [src/training/train_transformer.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/training/train_transformer.py)
-
-Nếu muốn thử hybrid:
-- train riêng `R2 regression`
-- train riêng `SoftCls Transformer`
-- blend / ensemble ở bước cuối
-
-## 9. Ghi chú
+## 8. Kết luận
 
 - Repo này mang tính thực nghiệm cao, có nhiều nhánh ý tưởng khác nhau cùng tồn tại.
 - Không phải mọi script đều dùng chung một format dữ liệu tuyệt đối giống nhau.
