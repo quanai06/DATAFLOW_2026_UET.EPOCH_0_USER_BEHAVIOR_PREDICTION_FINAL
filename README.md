@@ -30,9 +30,6 @@ DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION_FINAL/
 ├── README.md
 ├── requirements.txt
 ├── run.py
-├── rebuild_r2_pipeline.py
-├── run_r2_regression.py
-├── run_r2_softcls_v3.py
 ├── precompute_x_test.py
 ├── predict_each.py
 ├── data/
@@ -51,6 +48,10 @@ DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION_FINAL/
     ├── ai/
     ├── data/
     ├── metrics/
+    ├── r2/
+    │   ├── rebuild_r2_pipeline.py
+    │   ├── run_r2_regression.py
+    │   └── run_r2_softcls_v3.py
     ├── models/
     │   └── transformer_model.py
     ├── training/
@@ -59,9 +60,9 @@ DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION_FINAL/
 ```
 
 Các thành phần chính:
-- [rebuild_r2_pipeline.py](/home/hduong/dev/DATAFLOW_2026_push_target/rebuild_r2_pipeline.py): dựng lại pipeline dữ liệu Round 2, tạo sequence tensor và stats feature
-- [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/run_r2_regression.py): train nhánh hồi quy R2 với `LSTM / GRU / CNN`
-- [run_r2_softcls_v3.py](/home/hduong/dev/DATAFLOW_2026_push_target/run_r2_softcls_v3.py): train nhánh `Transformer Soft-Classification`
+- [rebuild_r2_pipeline.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/rebuild_r2_pipeline.py): dựng lại pipeline dữ liệu Round 2, tạo sequence tensor và stats feature
+- [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/run_r2_regression.py): train nhánh hồi quy R2 với `LSTM / GRU / CNN`
+- [run_r2_softcls_v3.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/run_r2_softcls_v3.py): train nhánh `Transformer Soft-Classification`
 - [src/models/transformer_model.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/models/transformer_model.py): mô hình Transformer thuần
 - [src/training/train_transformer.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/training/train_transformer.py): vòng train cho Transformer thuần
 - [scripts/predict_test.py](/home/hduong/dev/DATAFLOW_2026_push_target/scripts/predict_test.py): ensemble inference cho Transformer
@@ -71,7 +72,7 @@ Các thành phần chính:
 
 ## 2. Pipeline dữ liệu
 
-Luồng xử lý chính trong [rebuild_r2_pipeline.py](/home/hduong/dev/DATAFLOW_2026_push_target/rebuild_r2_pipeline.py):
+Luồng xử lý chính trong [rebuild_r2_pipeline.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/rebuild_r2_pipeline.py):
 
 1. Đọc dữ liệu gốc từ `data/X_train.csv`, `data/X_val.csv`, `data/X_test.csv`
 2. Tạo `manual features`:
@@ -110,8 +111,8 @@ Các file sinh ra thường gồm:
 - dùng một nhánh làm kiểm chứng hoặc fallback cho nhánh còn lại
 
 ### Thành phần chính
-- [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/run_r2_regression.py)
-- [run_r2_softcls_v3.py](/home/hduong/dev/DATAFLOW_2026_push_target/run_r2_softcls_v3.py)
+- [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/run_r2_regression.py)
+- [run_r2_softcls_v3.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/run_r2_softcls_v3.py)
 
 ### Khi nào dùng
 - Khi muốn khai thác tính bổ sung giữa mô hình tuần tự kiểu RNN và mô hình attention
@@ -164,7 +165,7 @@ Nhánh này là mô hình Transformer thuần trong [src/models/transformer_mode
 
 ## 5. Họ mô hình 3: LSTM + GRU
 
-Nhánh này nằm trong [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/run_r2_regression.py). Đây là hướng hồi quy trực tiếp theo competition metric.
+Nhánh này nằm trong [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/run_r2_regression.py). Đây là hướng hồi quy trực tiếp theo competition metric.
 
 ### Ý tưởng chính
 - encode chuỗi action bằng `LSTM` hoặc `GRU` hai chiều
@@ -216,22 +217,22 @@ pip install -r requirements.txt
 
 ### Dựng pipeline dữ liệu R2
 ```bash
-python rebuild_r2_pipeline.py
+python src/r2/rebuild_r2_pipeline.py
 ```
 
 ### Train nhánh hồi quy R2
 ```bash
-python run_r2_regression.py --n_per_type 3 --epochs_full 20 --batch 512 --stats_version v3
+python src/r2/run_r2_regression.py --n_per_type 3 --epochs_full 20 --batch 512 --stats_version v3
 ```
 
 ### Train Transformer SoftCls v3
 ```bash
-python run_r2_softcls_v3.py --seed 42 --folds 5 --d_model 512 --layers 6 --epochs 40 --batch 128
+python src/r2/run_r2_softcls_v3.py --seed 42 --folds 5 --d_model 512 --layers 6 --epochs 40 --batch 128
 ```
 
 ### Train fullfit cho SoftCls
 ```bash
-python run_r2_softcls_v3.py --seed 42 --d_model 512 --layers 6 --epochs 40 --batch 128 --fullfit
+python src/r2/run_r2_softcls_v3.py --seed 42 --d_model 512 --layers 6 --epochs 40 --batch 128 --fullfit
 ```
 
 ### Predict bằng Transformer
@@ -247,10 +248,10 @@ python run.py
 ## 8. Hướng dùng repo theo mục tiêu
 
 Nếu muốn nghiên cứu pipeline dữ liệu:
-- bắt đầu từ [rebuild_r2_pipeline.py](/home/hduong/dev/DATAFLOW_2026_push_target/rebuild_r2_pipeline.py)
+- bắt đầu từ [rebuild_r2_pipeline.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/rebuild_r2_pipeline.py)
 
 Nếu muốn train mô hình tuần tự ổn định:
-- bắt đầu từ [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/run_r2_regression.py)
+- bắt đầu từ [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/r2/run_r2_regression.py)
 
 Nếu muốn train mô hình attention / phân tích heatmap:
 - bắt đầu từ [src/models/transformer_model.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/models/transformer_model.py)
