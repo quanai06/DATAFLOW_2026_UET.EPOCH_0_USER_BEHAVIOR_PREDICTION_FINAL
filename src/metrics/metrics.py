@@ -1,6 +1,21 @@
 import torch
 import numpy as np
 from tabulate import tabulate
+import tensorflow as tf
+import os
+import dotenv
+
+dotenv.load_dotenv()
+# load hằng số 
+SEED = int(os.getenv("SEED", 2026))
+FINAL_MAX_LEN = int(os.getenv("FINAL_MAX_LEN", 37))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 128))
+EPOCHS = int(os.getenv("EPOCHS", 20))
+N_FOLDS = int(os.getenv("N_FOLDS", 5))
+TARGET_COLS = os.getenv("TARGET_COLS").split(",")
+M_CONST = np.array([float(x) for x in os.getenv("M_CONST", "12.0, 31.0, 99.0, 12.0, 31.0, 99.0").split(",")], dtype=np.float32)
+W_CONST_NP = np.array([float(x) for x in os.getenv("W_CONST_NP", "1.0, 1.0, 100.0, 1.0, 1.0, 100.0").split(",")], dtype=np.float32)
+W_CONST_TF = tf.constant(W_CONST_NP, dtype=tf.float32)
 
 def print_detailed_report(preds, targets, phase="AFTER EXPERT FE"):
     """
@@ -8,8 +23,8 @@ def print_detailed_report(preds, targets, phase="AFTER EXPERT FE"):
     Giúp soi kỹ Attr 3 & 6 (nhà máy) - nơi có trọng số x100.
     """
     # 1. Cấu hình hằng số chuẩn hóa M_j và trọng số W_j theo đề bài
-    M = torch.tensor([12, 31, 99, 12, 31, 99], dtype=torch.float32).to(preds.device)
-    W = torch.tensor([1, 1, 100, 1, 1, 100], dtype=torch.float32).to(preds.device)
+    M = torch.tensor(M_CONST, dtype=torch.float32).to(preds.device)
+    W = torch.tensor(W_CONST_NP, dtype=torch.float32).to(preds.device)
     
     # 2. Tính toán theo công thức Score của BTC
     # (pred/M - target/M)^2 * W
@@ -52,9 +67,9 @@ def print_detailed_report(preds, targets, phase="AFTER EXPERT FE"):
 class CompetitionMetric:
     def __init__(self, device):
         # M_j: [12, 31, 99, 12, 31, 99]
-        self.M = torch.tensor([12, 31, 99, 12, 31, 99]).float().to(device)
+        self.M = torch.tensor(M_CONST, dtype=torch.float32).to(device)
         # W_j: Alpha=100 cho Attr 3 và 6
-        self.W = torch.tensor([1, 1, 100, 1, 1, 100]).float().to(device)
+        self.W = torch.tensor(W_CONST_NP, dtype=torch.float32).to(device)
 
     def compute_all(self, y_pred, y_true):
         with torch.no_grad():
@@ -77,3 +92,28 @@ class CompetitionMetric:
             "weighted_mse_per_col": weighted_mse_per_col,
             "mse_per_col": raw_mse_per_col # Giữ tên cũ để không gãy code cũ
         }
+
+def set_seed(seed=SEED):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+
+@tf.keras.utils.register_keras_serializable(package='Custom')
+def scaled_weighted_mse(y_true, y_pred):
+    squared_error = tf.square(y_true - y_pred)
+    weighted_error = squared_error * W_CONST_TF
+    return tf.reduce_mean(tf.reduce_sum(weighted_error, axis=1) / 6.0)
+
+def evaluate_report(y_true, y_pred, name="VALIDATION"):
+    y_true, y_pred = y_true.astype(float), y_pred.astype(float)
+    score_cols = np.mean(((y_true - y_pred) / M_CONST)**2 * W_CONST_NP, axis=0)
+    final_score = np.sum(score_cols) / 6.0
+    
+    print(f"\n📊 BÁO CÁO ĐIỂM: {name}")
+    attrs = ['attr_1(M-BĐ)', 'attr_2(D-BĐ)', 'attr_3(P-BĐ)', 'attr_4(M-HT)', 'attr_5(D-HT)', 'attr_6(P-HT)']
+    for i, a in enumerate(attrs):
+        print(f"👉 {a:<15}: {score_cols[i]:.5f} (w={int(W_CONST_NP[i])})")
+    print(f"🏆 KAGGLE SCORE DỰ KIẾN: {final_score:.5f}\n")
+    return final_score

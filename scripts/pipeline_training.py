@@ -4,10 +4,34 @@ import torch
 from sklearn.model_selection import KFold
 from torch.utils.data import DataLoader
 from tabulate import tabulate
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.training.train_transformer import run_train_transformer
 from src.utils.loaders import SequenceDataset
 from src.models.transformer_model import TransformerModel
+
+import tensorflow as tf
+import pandas as pd
+import joblib
+from sklearn.model_selection import KFold
+from sklearn.preprocessing import StandardScaler
+
+from src.training.train_lstm_gru import build_model
+from src.metrics.metrics import set_seed, evaluate_report
+
+import dotenv
+dotenv.load_dotenv()
+
+SEED = int(os.getenv("SEED", 42))
+FINAL_MAX_LEN = int(os.getenv("FINAL_MAX_LEN", 37))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 128))
+EPOCHS = int(os.getenv("EPOCHS", 20))
+N_FOLDS = int(os.getenv("N_FOLDS", 5))
+TARGET_COLS = os.getenv("TARGET_COLS", ['attr_1','attr_2','attr_3','attr_4','attr_5','attr_6'])
+M_CONST_NP = np.array([float(x) for x in os.getenv("M_CONST_NP", "12.0, 31.0, 99.0, 12.0, 31.0, 99.0").split(",")], dtype=np.float32)
+W_CONST_NP = np.array([float(x) for x in os.getenv("W_CONST_NP", "1.0, 1.0, 100.0, 1.0, 1.0, 100.0").split(",")], dtype=np.float32)
 
 # --- HÀM 1: TÍNH ĐIỂM ENSEMBLE VÀ IN BẢNG ---
 def evaluate_ensemble_holdout(n_folds, holdout_data, device, phase="AFTER FEATURE ENGINEERING"):
@@ -133,4 +157,5 @@ def main():
     )
 
 if __name__ == "__main__":
-    main()
+    # main()
+    build_model()
