@@ -25,11 +25,44 @@ Project này phát triển theo 3 họ mô hình chính:
 
 ## 1. Cấu trúc repo
 
-Các file quan trọng:
+```text
+DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION_FINAL/
+├── README.md
+├── requirements.txt
+├── run.py
+├── rebuild_r2_pipeline.py
+├── run_r2_regression.py
+├── run_r2_softcls_v3.py
+├── precompute_x_test.py
+├── predict_each.py
+├── data/
+│   ├── precomputed_orders.parquet
+│   └── precomputed_dataset_summary.json
+├── figures/
+├── notebooks/
+├── outputs/
+├── report/
+├── scripts/
+│   ├── pipeline_ai.py
+│   ├── pipeline_training.py
+│   ├── predict_test.py
+│   └── plot/
+└── src/
+    ├── ai/
+    ├── data/
+    ├── metrics/
+    ├── models/
+    │   └── transformer_model.py
+    ├── training/
+    │   └── train_transformer.py
+    └── utils/
+```
+
+Các thành phần chính:
 - [rebuild_r2_pipeline.py](/home/hduong/dev/DATAFLOW_2026_push_target/rebuild_r2_pipeline.py): dựng lại pipeline dữ liệu Round 2, tạo sequence tensor và stats feature
 - [run_r2_regression.py](/home/hduong/dev/DATAFLOW_2026_push_target/run_r2_regression.py): train nhánh hồi quy R2 với `LSTM / GRU / CNN`
 - [run_r2_softcls_v3.py](/home/hduong/dev/DATAFLOW_2026_push_target/run_r2_softcls_v3.py): train nhánh `Transformer Soft-Classification`
-- [src/models/transformer_model.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/models/transformer_model.py): model Transformer thuần
+- [src/models/transformer_model.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/models/transformer_model.py): mô hình Transformer thuần
 - [src/training/train_transformer.py](/home/hduong/dev/DATAFLOW_2026_push_target/src/training/train_transformer.py): vòng train cho Transformer thuần
 - [scripts/predict_test.py](/home/hduong/dev/DATAFLOW_2026_push_target/scripts/predict_test.py): ensemble inference cho Transformer
 - [predict_each.py](/home/hduong/dev/DATAFLOW_2026_push_target/predict_each.py): inference 1 fold để kiểm tra nhanh
