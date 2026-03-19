@@ -1,3 +1,15 @@
+<div align="center">
+    
+  <img src="dataflow.png" width="200" alt="logo" />
+
+  # Chủ đề: Autoscaling Analysis - DataFlow 2026
+  
+  **Giải pháp Tối ưu hóa Tự động hóa việc cấp phát tài nguyên máy chủ (Autoscaling) dựa trên Học máy và Chiến lược lai (Hybrid Strategy).**
+  
+  ![Python](https://img.shields.io/badge/Python-3.12-red?logo=python&logoColor=white)
+  ![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange?logo=jupyter&logoColor=white)
+</div>
+
 # DATAFLOW_2026_UET.EPOCH_0_USER_BEHAVIOR_PREDICTION_FINAL
 
 Repo này lưu toàn bộ pipeline xử lý dữ liệu, huấn luyện mô hình và sinh submission cho bài toán dự đoán 6 thuộc tính hành vi người dùng từ chuỗi `action_id`.
