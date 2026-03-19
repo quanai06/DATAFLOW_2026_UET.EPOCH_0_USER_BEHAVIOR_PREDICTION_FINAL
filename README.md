@@ -2,9 +2,9 @@
     
   <img src="dataflow.png" width="200" alt="logo" />
 
-  # Chủ đề: Autoscaling Analysis - DataFlow 2026
+  # Chủ đề: User Behavior Prediction - DataFlow 2026
   
-  **Giải pháp Tối ưu hóa Tự động hóa việc cấp phát tài nguyên máy chủ (Autoscaling) dựa trên Học máy và Chiến lược lai (Hybrid Strategy).**
+  **Giải pháp dự đoán hành vi người dùng từ chuỗi hành động \`action\_id\` bằng các họ mô hình GRU, LSTM, Transformer và chiến lược lai (Hybrid Strategy).**
   
   ![Python](https://img.shields.io/badge/Python-3.12-red?logo=python&logoColor=white)
   ![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange?logo=jupyter&logoColor=white)
